@@ -22,10 +22,19 @@ python3 -m http.server 8000
    - **Jasper** — fast, single-shot rapid fire.
    - **Clementine** — slower, heavy three-way splash shots.
 2. **Drag** anywhere to move along the Dundee shore. Your hero fires automatically.
-3. **Tap** to unleash your **SPECIAL** mega-blast once the meter is full (killing
+3. **Catch the marmalade jar** 🍊 — monsters sometimes drop a jar of Dundee marmalade
+   that drifts down. Grab it to go into a temporary **marmalade boost**: faster fire,
+   bigger shots, and a chunk of SPECIAL. Krakens always drop one.
+4. **Tap** to unleash your **SPECIAL** mega-blast once the meter is full (killing
    monsters — especially the Kraken — fills it).
-4. Don't let monsters reach the city — every one that lands chips away at Dundee's
+5. Don't let monsters reach the city — every one that lands chips away at Dundee's
    health. When it hits zero, Dundee falls.
+
+### Dundee landmarks
+
+The waterfront is watched over by real Dundee sights: the **Tay Bridge**, **The Law**
+(with its war memorial), the **RRS Discovery**, **Caird Hall**, **V&A Dundee**, and
+**Cox's Stack**.
 
 Survive escalating waves and beat your best score (saved locally).
 

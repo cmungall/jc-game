@@ -162,8 +162,8 @@ function buildSkyline() {
   skyline = [];
   let x = 0;
   while (x < W) {
-    const bw = rand(26, 56);
-    const bh = rand(24, 66);
+    const bw = rand(24, 48);
+    const bh = rand(18, 46);   // filler kept short so landmarks stand out
     skyline.push({ x, w: bw, h: bh, lit: Math.random() < 0.6 });
     x += bw + rand(2, 10);
   }
@@ -176,6 +176,7 @@ let monsters = [];
 let particles = [];
 let floaters = [];   // score text
 let ripples = [];
+let powerups = [];   // marmalade jars
 
 const MonsterTypes = {
   blob:   { r: 22, hp: 1, speed: 1.0, score: 10, color: "#5fe08a", eyes: 1 },
@@ -194,10 +195,12 @@ function makePlayer(type) {
     cooldown: 0,
     fireRate: type === "jasper" ? 240 : 340,   // ms
     special: 0,                                 // 0..1
+    power: 0,                                   // marmalade buff time left (ms)
     invuln: 0,
     recoil: 0,
   };
 }
+const MARM_DURATION = 6500;
 
 // ---------- State ----------
 const State = { TITLE: 0, PLAY: 1, PAUSE: 2, OVER: 3 };
@@ -278,14 +281,24 @@ function shake(mag) { shakeT = 1; shakeMag = mag; }
 function fire() {
   if (!player) return;
   const isJ = player.type === "jasper";
+  const pow = player.power > 0;   // marmalade boost
+  const ox = player.x, oy = player.y - player.r;
   player.recoil = 6;
   if (isJ) {
-    bullets.push(mkBullet(player.x, player.y - player.r, 0, -9, 6, "#ffd24a", 1));
+    bullets.push(mkBullet(ox, oy, 0, -9, pow ? 8 : 6, pow ? "#ff8a3d" : "#ffd24a", pow ? 2 : 1));
+    if (pow) {
+      bullets.push(mkBullet(ox, oy, -3, -8.5, 7, "#ffb347", 1));
+      bullets.push(mkBullet(ox, oy, 3, -8.5, 7, "#ffb347", 1));
+    }
   } else {
     // Clementine: bigger, spread of 3, slower but heavier
-    bullets.push(mkBullet(player.x, player.y - player.r, 0, -7.5, 10, "#ff8a3d", 2));
-    bullets.push(mkBullet(player.x, player.y - player.r, -2.2, -7, 8, "#ffb36b", 1));
-    bullets.push(mkBullet(player.x, player.y - player.r, 2.2, -7, 8, "#ffb36b", 1));
+    bullets.push(mkBullet(ox, oy, 0, -7.5, pow ? 13 : 10, "#ff8a3d", pow ? 3 : 2));
+    bullets.push(mkBullet(ox, oy, -2.2, -7, pow ? 10 : 8, "#ffb36b", 1));
+    bullets.push(mkBullet(ox, oy, 2.2, -7, pow ? 10 : 8, "#ffb36b", 1));
+    if (pow) {
+      bullets.push(mkBullet(ox, oy, -4.5, -6.5, 9, "#ffcf8b", 1));
+      bullets.push(mkBullet(ox, oy, 4.5, -6.5, 9, "#ffcf8b", 1));
+    }
   }
   Audio.shoot();
 }
@@ -316,9 +329,10 @@ function update(dt) {
   player.x = clamp(player.x, player.r, W - player.r);
   if (player.recoil > 0) player.recoil *= 0.8;
   if (player.invuln > 0) player.invuln -= dt;
-  // auto fire
+  if (player.power > 0) player.power -= dt;
+  // auto fire (marmalade = faster)
   player.cooldown -= dt;
-  if (player.cooldown <= 0) { fire(); player.cooldown = player.fireRate; }
+  if (player.cooldown <= 0) { fire(); player.cooldown = player.power > 0 ? player.fireRate * 0.5 : player.fireRate; }
 
   // spawning
   if (monstersSpawned < monstersThisWave) {
@@ -398,7 +412,36 @@ function update(dt) {
     const f = floaters[i]; f.y += f.vy; f.a -= 0.014;
     if (f.a <= 0) floaters.splice(i, 1);
   }
+
+  // marmalade power-ups drift down; catch them to power up
+  for (let i = powerups.length - 1; i >= 0; i--) {
+    const p = powerups[i];
+    p.phase += 0.05;
+    p.y += p.vy * (dt / 16.7);
+    p.x += Math.sin(p.phase) * 0.6;
+    const rr = player.r + p.r;
+    if (dist2(p.x, p.y, player.x, player.y - player.r * 0.4) <= rr * rr) {
+      collectMarmalade(p);
+      powerups.splice(i, 1);
+      continue;
+    }
+    if (p.y - p.r > shoreY + 20) { splash(p.x, shoreY); powerups.splice(i, 1); }  // missed
+  }
+
   if (shakeT > 0) shakeT -= dt / 300;
+}
+
+function collectMarmalade(p) {
+  player.power = MARM_DURATION;
+  player.special = clamp(player.special + 0.34, 0, 1);
+  floatText(player.x, player.y - player.r * 2, "MARMALADE!", "#ff8a3d", 26);
+  burst(p.x, p.y, "#ffb347", 22);
+  Audio.special();
+  updateHUD();
+}
+
+function spawnMarmalade(x, y) {
+  powerups.push({ x: clamp(x, 20, W - 20), y, vy: 1.15, r: 15, phase: rand(0, 7) });
 }
 
 function killMonster(m, i) {
@@ -409,6 +452,8 @@ function killMonster(m, i) {
   floatText(m.x, m.y - m.r, "+" + m.score, "#ffd24a", m.big ? 30 : 18);
   Audio.pop();
   if (m.big) shake(10);
+  // marmalade drop: krakens always, others sometimes (not if one is already falling)
+  if (powerups.length === 0 && (m.big || Math.random() < 0.13)) spawnMarmalade(m.x, m.y);
   monsters.splice(i, 1);
   updateHUD();
 }
@@ -445,10 +490,31 @@ function render() {
     ctx.restore();
   });
 
+  // marmalade jars
+  powerups.forEach(p => drawMarmalade(p, t));
+
   // player
   if (player && state !== State.TITLE) {
     ctx.save();
     ctx.translate(player.x, player.y - player.recoil);
+    // marmalade aura + timer
+    if (player.power > 0) {
+      const pulse = 1 + Math.sin(t * 0.02) * 0.08;
+      ctx.save();
+      ctx.globalAlpha = 0.35 + Math.sin(t * 0.02) * 0.12;
+      const g = ctx.createRadialGradient(0, 0, player.r * 0.5, 0, 0, player.r * 2.1 * pulse);
+      g.addColorStop(0, "rgba(255,170,60,.6)");
+      g.addColorStop(1, "rgba(255,170,60,0)");
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.arc(0, 0, player.r * 2.1 * pulse, 0, 7); ctx.fill();
+      ctx.restore();
+      // countdown bar over head
+      const frac = clamp(player.power / MARM_DURATION, 0, 1);
+      ctx.fillStyle = "rgba(0,0,0,.4)";
+      ctx.fillRect(-player.r, -player.r * 2.4, player.r * 2, 5);
+      ctx.fillStyle = "#ff8a3d";
+      ctx.fillRect(-player.r, -player.r * 2.4, player.r * 2 * frac, 5);
+    }
     if (player.invuln > 0 && Math.floor(t / 100) % 2 === 0) ctx.globalAlpha = 0.4;
     drawHero(ctx, player.type, player.r, t);
     ctx.restore();
@@ -486,6 +552,9 @@ function drawScene(t) {
   ctx.fillStyle = sky;
   ctx.fillRect(0, 0, W, riverY);
 
+  // The Law (hill + war memorial) on the far horizon
+  drawLaw(t);
+
   // distant Tay Rail Bridge silhouette
   drawBridge(t);
 
@@ -509,7 +578,7 @@ function drawScene(t) {
     ctx.stroke();
   }
 
-  // Dundee skyline sitting on the near shore (drawn over the water)
+  // Dundee skyline sitting on the near shore (filler buildings first, behind landmarks)
   const cityTop = shoreY;
   skyline.forEach(b => {
     ctx.fillStyle = "#0a1a2e";
@@ -524,6 +593,12 @@ function drawScene(t) {
     }
   });
 
+  // signature Dundee landmarks along the waterfront
+  drawCoxStack(W * 0.10, cityTop);
+  drawCairdHall(W * 0.46, cityTop);
+  drawVA(W * 0.76, cityTop);
+  drawDiscovery(t);   // RRS Discovery moored on the water in front
+
   // shore / promenade
   ctx.fillStyle = "#1a2a1f";
   ctx.fillRect(0, shoreY - 6, W, H - shoreY + 6);
@@ -531,22 +606,158 @@ function drawScene(t) {
   ctx.fillRect(0, shoreY - 6, W, 6);
 }
 
+// small gold caption under/over a landmark
+function label(text, x, y, alpha) {
+  ctx.save();
+  ctx.globalAlpha = alpha == null ? 0.6 : alpha;
+  ctx.font = "700 10px Trebuchet MS, sans-serif";
+  ctx.textAlign = "center";
+  ctx.lineWidth = 3; ctx.strokeStyle = "rgba(0,0,0,.6)";
+  ctx.strokeText(text, x, y);
+  ctx.fillStyle = "#ffd88a";
+  ctx.fillText(text, x, y);
+  ctx.restore();
+  ctx.textAlign = "left";
+}
+
+function drawLaw(t) {
+  const baseY = riverY - 40;
+  const cx = W * 0.80, wdt = Math.min(W * 0.55, 300), ht = 84;
+  ctx.fillStyle = "#123324";
+  ctx.beginPath();
+  ctx.moveTo(cx - wdt / 2, baseY);
+  ctx.quadraticCurveTo(cx - wdt * 0.16, baseY - ht, cx, baseY - ht);
+  ctx.quadraticCurveTo(cx + wdt * 0.20, baseY - ht, cx + wdt / 2, baseY);
+  ctx.closePath(); ctx.fill();
+  // war memorial tower + beacon
+  ctx.fillStyle = "#0d2619";
+  ctx.fillRect(cx - 4, baseY - ht - 18, 8, 20);
+  ctx.fillStyle = "rgba(255,180,80,.85)";
+  ctx.beginPath(); ctx.arc(cx, baseY - ht - 20, 2.5, 0, 7); ctx.fill();
+  label("THE LAW", cx, baseY - ht - 26, 0.5);
+}
+
+function drawCoxStack(x, base) {
+  const h = 98, w = 12;
+  ctx.fillStyle = "#12283f";
+  ctx.fillRect(x - w / 2, base - h, w, h);
+  // ornate banded chimney top
+  ctx.fillStyle = "#b5762e";
+  ctx.fillRect(x - w / 2 - 2, base - h, w + 4, 7);
+  ctx.fillRect(x - w / 2 - 1, base - h + 12, w + 2, 3);
+  ctx.fillRect(x - w / 2 - 1, base - h + 19, w + 2, 3);
+  label("COX'S STACK", x, base - h - 6, 0.55);
+}
+
+function drawCairdHall(x, base) {
+  const w = 76, h = 48;
+  ctx.fillStyle = "#13293f";
+  ctx.fillRect(x - w / 2, base - h, w, h);
+  // pediment
+  ctx.beginPath();
+  ctx.moveTo(x - w / 2 - 4, base - h);
+  ctx.lineTo(x, base - h - 15);
+  ctx.lineTo(x + w / 2 + 4, base - h);
+  ctx.closePath(); ctx.fill();
+  // columns
+  ctx.fillStyle = "#20405e";
+  for (let i = -3; i <= 3; i++) ctx.fillRect(x + i * 10 - 2, base - h + 8, 4, h - 12);
+  label("CAIRD HALL", x, base - h - 19, 0.55);
+}
+
+function drawVA(x, base) {
+  const w = 92, h = 54;
+  ctx.fillStyle = "#0f2236";
+  ctx.beginPath();                       // angular stacked slabs (Kengo Kuma prow)
+  ctx.moveTo(x - w / 2, base);
+  ctx.lineTo(x - w / 2 + 10, base - h * 0.5);
+  ctx.lineTo(x - 8, base - h * 0.5);
+  ctx.lineTo(x - 2, base - h);
+  ctx.lineTo(x + 16, base - h);
+  ctx.lineTo(x + 22, base - h * 0.45);
+  ctx.lineTo(x + w / 2, base - h * 0.45);
+  ctx.lineTo(x + w / 2, base);
+  ctx.closePath(); ctx.fill();
+  // horizontal concrete bands
+  ctx.strokeStyle = "rgba(130,175,215,.28)"; ctx.lineWidth = 1;
+  for (let yy = base - 6; yy > base - h * 0.45; yy -= 6) {
+    ctx.beginPath(); ctx.moveTo(x - w / 2, yy); ctx.lineTo(x + w / 2, yy); ctx.stroke();
+  }
+  label("V&A DUNDEE", x, base - h - 4, 0.55);
+}
+
+function drawDiscovery(t) {
+  const x = W * 0.20, y = shoreY - 24 + Math.sin(t * 0.001) * 2;
+  const s = clamp(W / 430, 0.7, 1.1);
+  ctx.save();
+  ctx.translate(x, y); ctx.scale(s, s);
+  // hull
+  ctx.fillStyle = "#3b2a17";
+  ctx.beginPath();
+  ctx.moveTo(-34, 0); ctx.quadraticCurveTo(0, 15, 34, 0);
+  ctx.lineTo(28, -7); ctx.lineTo(-28, -7); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = "#c9a24a"; ctx.fillRect(-30, -6, 60, 2);   // gold stripe
+  // three masts with yards
+  ctx.strokeStyle = "#22323c"; ctx.lineWidth = 2; ctx.lineCap = "round";
+  for (const mx of [-18, 0, 18]) {
+    ctx.beginPath(); ctx.moveTo(mx, -7); ctx.lineTo(mx, -42); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(mx - 9, -34); ctx.lineTo(mx + 9, -34); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(mx - 7, -24); ctx.lineTo(mx + 7, -24); ctx.stroke();
+  }
+  // rigging
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(-28, -7); ctx.lineTo(0, -44); ctx.lineTo(28, -7); ctx.stroke();
+  ctx.restore();
+  label("RRS DISCOVERY", x, y - 50 * s, 0.5);
+}
+
+function drawMarmalade(p, t) {
+  ctx.save();
+  ctx.translate(p.x, p.y + Math.sin(p.phase + t * 0.005) * 2);
+  const r = p.r;
+  // glow
+  ctx.fillStyle = "rgba(255,160,60,.30)";
+  ctx.beginPath(); ctx.arc(0, 0, r * 1.7, 0, 7); ctx.fill();
+  // jar body
+  ctx.fillStyle = "#ff9a2e";
+  roundRect(ctx, -r * 0.7, -r * 0.55, r * 1.4, r * 1.45, 4); ctx.fill();
+  // shine
+  ctx.fillStyle = "rgba(255,255,255,.35)";
+  roundRect(ctx, -r * 0.5, -r * 0.4, r * 0.3, r * 1.1, 3); ctx.fill();
+  // lid
+  ctx.fillStyle = "#c85a12";
+  roundRect(ctx, -r * 0.78, -r * 0.85, r * 1.56, r * 0.4, 3); ctx.fill();
+  // label
+  ctx.fillStyle = "#fff8ec";
+  roundRect(ctx, -r * 0.55, -r * 0.12, r * 1.1, r * 0.82, 2); ctx.fill();
+  ctx.fillStyle = "#c85a12";
+  ctx.font = "900 " + (r * 0.8) + "px Trebuchet MS, sans-serif";
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillText("M", 0, r * 0.3);
+  ctx.restore();
+  ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
+}
+
 function drawBridge(t) {
-  const by = riverY - 40;
-  ctx.strokeStyle = "rgba(8,20,34,.7)";
-  ctx.fillStyle = "rgba(8,20,34,.7)";
+  const by = riverY - 34;
+  const curve = x => by - Math.sin((x / W) * Math.PI) * 8;   // gentle rise to mid-span
+  ctx.save();
+  ctx.strokeStyle = "rgba(9,20,34,.9)";
+  ctx.fillStyle = "rgba(9,20,34,.9)";
   ctx.lineWidth = 3;
   // deck
-  ctx.beginPath(); ctx.moveTo(0, by); ctx.lineTo(W, by); ctx.stroke();
-  // piers
-  for (let x = 20; x < W; x += 46) {
-    ctx.fillRect(x, by, 5, 40);
-    // little truss
-    ctx.beginPath();
-    ctx.moveTo(x + 2.5, by);
-    ctx.lineTo(x + 2.5, by - 10);
-    ctx.stroke();
+  ctx.beginPath();
+  for (let x = 0; x <= W; x += 18) { const y = curve(x); x === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y); }
+  ctx.stroke();
+  // piers dropping into the water + lamp lights
+  for (let x = 16; x < W; x += 40) {
+    const y = curve(x);
+    ctx.fillRect(x, y, 4, 42);
+    ctx.fillStyle = "rgba(255,205,120,.75)"; ctx.fillRect(x - 1, y - 5, 6, 3);   // lamp
+    ctx.fillStyle = "rgba(9,20,34,.9)";
   }
+  ctx.restore();
+  label("TAY BRIDGE", W * 0.42, curve(W * 0.42) - 9, 0.4);
 }
 
 function drawMonster(m, t) {
@@ -653,7 +864,7 @@ function updateHUD() {
 function startGame() {
   if (!chosenChar) return;
   player = makePlayer(chosenChar);
-  bullets = []; monsters = []; particles = []; floaters = []; ripples = [];
+  bullets = []; monsters = []; particles = []; floaters = []; ripples = []; powerups = [];
   score = 0; cityHP = 100;
   el.hud.classList.remove("hidden");
   hideAll();
