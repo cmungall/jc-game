@@ -297,7 +297,7 @@ function spawnDescender() {
     const fromLeft = Math.random() < 0.5;
     const by = rand(shoreY - 150, shoreY - 80);
     specials.push({ type: "taymara", x: fromLeft ? -40 : W + 40, y: by, baseY: by,
-                    vx: fromLeft ? 1.6 : -1.6, r: 26, hp: 6, maxHp: 6, phase: rand(0, 7), hitFlash: 0 });
+                    vx: fromLeft ? 1.6 : -1.6, r: 26, hp: 10, maxHp: 10, phase: rand(0, 7), hitFlash: 0, inv: 0 });
   }
 }
 
@@ -466,6 +466,7 @@ function update(dt) {
     const p = specials[i];
     p.phase += 0.05;
     if (p.hitFlash > 0) p.hitFlash -= dt / 150;
+    if (p.inv > 0) p.inv -= dt;
     if (p.type === "irnbru") {
       p.y += p.vy * (dt / 16.7);
       p.x += Math.sin(p.phase) * 0.5;
@@ -495,8 +496,10 @@ function update(dt) {
         updateHUD();
         break;
       } else {                                 // Taymara — takes a few knocks, then sinks
+        if (p.inv > 0) continue;               // i-frames: rapid/marmalade fire passes through
         bullets.splice(j, 1);
-        p.hp -= b.dmg;
+        p.hp -= 1;                             // one heart per hit, regardless of shot size
+        p.inv = 450;
         p.hitFlash = 1;
         burst(b.x, b.y, "#cfe6fb", 6);
         Audio.hit();
