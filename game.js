@@ -289,10 +289,15 @@ function shake(mag) { shakeT = 1; shakeMag = mag; }
 // ---------- Irn-Bru & Taymara descenders ----------
 function spawnDescender() {
   if (Math.random() < 0.5) {
+    // Irn-Bru can drops from the top — shoot it to heal Dundee
     specials.push({ type: "irnbru", x: rand(60, W - 60), y: -50, vy: 1.15, r: 24,
                     hp: 8, maxHp: 8, phase: rand(0, 7) });
   } else {
-    specials.push({ type: "taymara", x: rand(70, W - 70), y: -40, vy: 0.9, r: 26, phase: rand(0, 7) });
+    // Taymara sails ACROSS the river — slide aside so you don't sink it
+    const fromLeft = Math.random() < 0.5;
+    const by = rand(shoreY - 150, shoreY - 80);
+    specials.push({ type: "taymara", x: fromLeft ? -40 : W + 40, y: by, baseY: by,
+                    vx: fromLeft ? 1.6 : -1.6, r: 26, hp: 6, maxHp: 6, phase: rand(0, 7), hitFlash: 0 });
   }
 }
 
@@ -456,12 +461,18 @@ function update(dt) {
     }
   }
 
-  // Irn-Bru cans & the Taymara boat
+  // Irn-Bru cans (drop from top) & the Taymara boat (sails across)
   for (let i = specials.length - 1; i >= 0; i--) {
     const p = specials[i];
     p.phase += 0.05;
-    p.y += p.vy * (dt / 16.7);
-    p.x += Math.sin(p.phase) * 0.5;
+    if (p.hitFlash > 0) p.hitFlash -= dt / 150;
+    if (p.type === "irnbru") {
+      p.y += p.vy * (dt / 16.7);
+      p.x += Math.sin(p.phase) * 0.5;
+    } else {
+      p.x += p.vx * (dt / 16.7);
+      p.y = p.baseY + Math.sin(p.phase) * 3;   // bob on the water
+    }
 
     // bullet / fish collisions
     for (let j = bullets.length - 1; j >= 0; j--) {
@@ -483,22 +494,33 @@ function update(dt) {
         }
         updateHUD();
         break;
-      } else {                                 // Taymara — you weren't meant to shoot it!
+      } else {                                 // Taymara — takes a few knocks, then sinks
         bullets.splice(j, 1);
-        floatText(p.x, p.y, "OCH, NO!", "#ff5a5a", 22);
-        burst(p.x, p.y, "#9fb8c8", 16);
-        Audio.hurt();
-        specials.splice(i, 1);
+        p.hp -= b.dmg;
+        p.hitFlash = 1;
+        burst(b.x, b.y, "#cfe6fb", 6);
+        Audio.hit();
+        if (p.hp <= 0) {
+          floatText(p.x, p.y, "OCH, NO!", "#ff5a5a", 22);
+          burst(p.x, p.y, "#9fb8c8", 18); splash(p.x, p.y);
+          Audio.hurt();
+          specials.splice(i, 1);
+        } else if (p.hp <= 2) {
+          floatText(p.x, p.y - p.r, "careful!", "#ffd24a", 16);
+        }
         break;
       }
     }
     if (i >= specials.length || specials[i] !== p) continue;   // was removed above
 
-    // reached the shore?
-    if (p.y + p.r >= shoreY - 8) {
-      if (p.type === "taymara") landTaymara(p.x);
-      else fizz(p.x, shoreY - 8);              // can fizzled out un-shot
-      specials.splice(i, 1);
+    if (p.type === "irnbru") {
+      if (p.y + p.r >= shoreY - 8) { fizz(p.x, shoreY - 8); specials.splice(i, 1); }  // fizzled out un-shot
+    } else {
+      // made it across? dolphins to the rescue!
+      if ((p.vx > 0 && p.x - p.r > W) || (p.vx < 0 && p.x + p.r < 0)) {
+        landTaymara(clamp(p.x, 40, W - 40));
+        specials.splice(i, 1);
+      }
     }
   }
 
@@ -906,20 +928,26 @@ function drawIrnBru(p, t) {
 }
 
 function drawTaymara(p, t) {
-  const bob = Math.sin(p.phase) * 2;
+  const flip = p.vx < 0 ? -1 : 1;   // face the way it's sailing
+  const flash = p.hitFlash > 0;
   ctx.save();
-  ctx.translate(p.x, p.y + bob);
+  ctx.translate(p.x, p.y);
   // friendly green halo — a hint NOT to shoot
   ctx.fillStyle = "rgba(110,227,140,.18)";
   ctx.beginPath(); ctx.arc(0, 0, p.r * 1.5, 0, 7); ctx.fill();
+  // little bow wake
+  ctx.fillStyle = "rgba(200,235,255,.3)";
+  ctx.beginPath(); ctx.ellipse(flip * 24, 6, 10, 3, 0, 0, 7); ctx.fill();
+  ctx.save();
+  ctx.scale(flip, 1);
   // hull
-  ctx.fillStyle = "#f2f6fa";
+  ctx.fillStyle = flash ? "#ffffff" : "#f2f6fa";
   ctx.beginPath();
   ctx.moveTo(-26, 2); ctx.quadraticCurveTo(0, 20, 26, 2);
   ctx.lineTo(20, -6); ctx.lineTo(-20, -6); ctx.closePath(); ctx.fill();
   ctx.fillStyle = "#2a7fc0"; ctx.fillRect(-24, -3, 48, 3);   // waterline stripe
   // wheelhouse
-  ctx.fillStyle = "#e94f4f"; roundRect(ctx, -9, -20, 18, 15, 3); ctx.fill();
+  ctx.fillStyle = flash ? "#ffd0d0" : "#e94f4f"; roundRect(ctx, -9, -20, 18, 15, 3); ctx.fill();
   ctx.fillStyle = "#bfe4ff"; ctx.fillRect(-5, -17, 10, 6);   // window
   // mast + friendly heart flag
   ctx.strokeStyle = "#3a2a17"; ctx.lineWidth = 2;
@@ -928,7 +956,14 @@ function drawTaymara(p, t) {
   ctx.beginPath();
   ctx.moveTo(2, -34); ctx.lineTo(14, -31); ctx.lineTo(2, -27); ctx.closePath(); ctx.fill();
   ctx.restore();
-  label("TAYMARA — don't shoot!", p.x, p.y - p.r - 12, 0.6);
+  // heart HP meter (how much more knocking it can take)
+  const hw = 8;
+  for (let i = 0; i < p.maxHp; i++) {
+    ctx.fillStyle = i < p.hp ? "#6fe3a0" : "rgba(255,90,90,.55)";
+    ctx.fillRect(-p.maxHp * hw / 2 + i * hw, -p.r - 14, hw - 2, 4);
+  }
+  ctx.restore();
+  label("TAYMARA — don't sink it!", p.x, p.y - p.r - 20, 0.6);
 }
 
 function drawDolphin(d, t) {

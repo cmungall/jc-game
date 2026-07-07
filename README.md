@@ -27,9 +27,11 @@ python3 -m http.server 8000
    bigger shots, and a chunk of SPECIAL. Krakens always drop one.
 4. **Blast the giant Irn-Bru can** 🥫 — every hit fizzes out a splash of Irn-Bru that
    restores a little of Dundee's health, with a bigger top-up when you burst it.
-5. **Do NOT shoot the Taymara boat** ⛵ — let it reach the shore. When it lands, a pod
-   of **Tay dolphins** leaps out and pelts the monsters with fish for a few seconds
-   before swimming off. Shoot the boat and you sink it (och, no!).
+5. **Don't sink the Taymara boat** ⛵ — it sails *across* the river from one side to the
+   other. Since you auto-fire straight up, slide aside to let it pass (it can take a
+   couple of stray knocks, shown by its heart meter, but too many and it sinks). If it
+   makes it across, a pod of **Tay dolphins** leaps out and pelts the monsters with fish
+   for a few seconds before swimming off.
 6. **Tap** to unleash your **SPECIAL** mega-blast once the meter is full (killing
    monsters — especially the Kraken — fills it).
 7. Don't let monsters reach the city — every one that lands chips away at Dundee's
