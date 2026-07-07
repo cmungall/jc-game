@@ -25,9 +25,14 @@ python3 -m http.server 8000
 3. **Catch the marmalade jar** 🍊 — monsters sometimes drop a jar of Dundee marmalade
    that drifts down. Grab it to go into a temporary **marmalade boost**: faster fire,
    bigger shots, and a chunk of SPECIAL. Krakens always drop one.
-4. **Tap** to unleash your **SPECIAL** mega-blast once the meter is full (killing
+4. **Blast the giant Irn-Bru can** 🥫 — every hit fizzes out a splash of Irn-Bru that
+   restores a little of Dundee's health, with a bigger top-up when you burst it.
+5. **Do NOT shoot the Taymara boat** ⛵ — let it reach the shore. When it lands, a pod
+   of **Tay dolphins** leaps out and pelts the monsters with fish for a few seconds
+   before swimming off. Shoot the boat and you sink it (och, no!).
+6. **Tap** to unleash your **SPECIAL** mega-blast once the meter is full (killing
    monsters — especially the Kraken — fills it).
-5. Don't let monsters reach the city — every one that lands chips away at Dundee's
+7. Don't let monsters reach the city — every one that lands chips away at Dundee's
    health. When it hits zero, Dundee falls.
 
 ### Dundee landmarks

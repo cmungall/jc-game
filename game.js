@@ -177,6 +177,9 @@ let particles = [];
 let floaters = [];   // score text
 let ripples = [];
 let powerups = [];   // marmalade jars
+let specials = [];   // descending Irn Bru cans & the Taymara boat
+let dolphins = [];   // allied dolphins released by the Taymara
+let descendTimer = 9000;   // ms until next Irn Bru / Taymara
 
 const MonsterTypes = {
   blob:   { r: 22, hp: 1, speed: 1.0, score: 10, color: "#5fe08a", eyes: 1 },
@@ -275,7 +278,55 @@ function burst(x, y, color, n) {
 function floatText(x, y, text, color, size) {
   floaters.push({ x, y, text, color, size: size || 18, a: 1, vy: -0.6 });
 }
+function fizz(x, y) {   // Irn-Bru bubbles
+  for (let i = 0; i < 6; i++) {
+    particles.push({ x, y, vx: rand(-2.5, 2.5), vy: rand(-3.5, -1), r: rand(2, 5), a: 1,
+                     c: Math.random() < 0.5 ? "#ff7a1a" : "#ffd24a", g: 0.05 });
+  }
+}
 function shake(mag) { shakeT = 1; shakeMag = mag; }
+
+// ---------- Irn-Bru & Taymara descenders ----------
+function spawnDescender() {
+  if (Math.random() < 0.5) {
+    specials.push({ type: "irnbru", x: rand(60, W - 60), y: -50, vy: 1.15, r: 24,
+                    hp: 8, maxHp: 8, phase: rand(0, 7) });
+  } else {
+    specials.push({ type: "taymara", x: rand(70, W - 70), y: -40, vy: 0.9, r: 26, phase: rand(0, 7) });
+  }
+}
+
+function landTaymara(x) {
+  floatText(x, shoreY - 44, "TAYMARA!", "#6fe3ff", 26);
+  floatText(x, shoreY - 20, "dolphins to the rescue!", "#8fe3ff", 15);
+  Audio.wave();
+  const n = 3;
+  for (let i = 0; i < n; i++) {
+    dolphins.push({
+      x: clamp(x + (i - 1) * 46, 30, W - 30),
+      baseY: shoreY - 12,
+      y: shoreY - 12,
+      phase: rand(0, 7),
+      life: 8000,                 // ms of covering fire
+      fireCd: rand(250, 800),
+      dir: i <= 1 ? -1 : 1,       // swim-off direction
+    });
+  }
+}
+
+function dolphinFish(x, y, tx, ty) {
+  const dx = tx - x, dy = ty - y, len = Math.hypot(dx, dy) || 1, sp = 8;
+  bullets.push({ x, y, vx: dx / len * sp, vy: dy / len * sp, r: 7, c: "#8fe3ff", dmg: 2, spin: 0, fish: true });
+}
+
+function nearestMonster(x, y) {
+  let best = null, bd = Infinity;
+  for (const m of monsters) {
+    const d = dist2(x, y, m.x, m.y);
+    if (d < bd) { bd = d; best = m; }
+  }
+  return best;
+}
 
 // ---------- Firing ----------
 function fire() {
@@ -347,6 +398,13 @@ function update(dt) {
     if (waveTimer > 900) startWave(wave + 1);
   }
 
+  // Irn-Bru / Taymara appear now and then
+  descendTimer -= dt;
+  if (descendTimer <= 0 && specials.length < 2) {
+    spawnDescender();
+    descendTimer = rand(15000, 24000);
+  }
+
   // bullets
   for (let i = bullets.length - 1; i >= 0; i--) {
     const b = bullets[i];
@@ -395,6 +453,72 @@ function update(dt) {
           break;
         }
       }
+    }
+  }
+
+  // Irn-Bru cans & the Taymara boat
+  for (let i = specials.length - 1; i >= 0; i--) {
+    const p = specials[i];
+    p.phase += 0.05;
+    p.y += p.vy * (dt / 16.7);
+    p.x += Math.sin(p.phase) * 0.5;
+
+    // bullet / fish collisions
+    for (let j = bullets.length - 1; j >= 0; j--) {
+      const b = bullets[j];
+      const rr = p.r + b.r;
+      if (dist2(p.x, p.y, b.x, b.y) > rr * rr) continue;
+      if (p.type === "irnbru") {
+        bullets.splice(j, 1);
+        p.hp -= b.dmg;
+        fizz(b.x, b.y);
+        Audio.hit();
+        cityHP = clamp(cityHP + 1, 0, 100);   // a wee splash of Irn-Bru
+        if (p.hp <= 0) {
+          cityHP = clamp(cityHP + 6, 0, 100);
+          floatText(p.x, p.y, "+IRN-BRU!", "#ff7a1a", 24);
+          burst(p.x, p.y, "#ff7a1a", 22); fizz(p.x, p.y); fizz(p.x, p.y);
+          Audio.pop();
+          specials.splice(i, 1);
+        }
+        updateHUD();
+        break;
+      } else {                                 // Taymara — you weren't meant to shoot it!
+        bullets.splice(j, 1);
+        floatText(p.x, p.y, "OCH, NO!", "#ff5a5a", 22);
+        burst(p.x, p.y, "#9fb8c8", 16);
+        Audio.hurt();
+        specials.splice(i, 1);
+        break;
+      }
+    }
+    if (i >= specials.length || specials[i] !== p) continue;   // was removed above
+
+    // reached the shore?
+    if (p.y + p.r >= shoreY - 8) {
+      if (p.type === "taymara") landTaymara(p.x);
+      else fizz(p.x, shoreY - 8);              // can fizzled out un-shot
+      specials.splice(i, 1);
+    }
+  }
+
+  // allied dolphins from the Taymara
+  for (let i = dolphins.length - 1; i >= 0; i--) {
+    const d = dolphins[i];
+    d.phase += 0.12;
+    d.life -= dt;
+    if (d.life > 0) {
+      d.y = d.baseY - Math.abs(Math.sin(d.phase)) * 24;   // leaping out of the Tay
+      d.fireCd -= dt;
+      if (d.fireCd <= 0 && monsters.length) {
+        const tgt = nearestMonster(d.x, d.y);
+        if (tgt) { dolphinFish(d.x, d.y - 6, tgt.x, tgt.y); Audio.shoot(); }
+        d.fireCd = rand(450, 950);
+      }
+    } else {                                    // time's up — swim off
+      d.x += d.dir * 3.2;
+      d.y = d.baseY - Math.abs(Math.sin(d.phase)) * 10;
+      if (d.x < -50 || d.x > W + 50) dolphins.splice(i, 1);
     }
   }
 
@@ -479,14 +603,30 @@ function render() {
   // monsters
   monsters.forEach(m => drawMonster(m, t));
 
-  // bullets
+  // Irn-Bru cans & Taymara boat
+  specials.forEach(p => p.type === "irnbru" ? drawIrnBru(p, t) : drawTaymara(p, t));
+
+  // allied dolphins
+  dolphins.forEach(d => drawDolphin(d, t));
+
+  // bullets (and dolphin fish)
   bullets.forEach(b => {
     ctx.save();
-    ctx.translate(b.x, b.y); ctx.rotate(b.spin);
-    ctx.fillStyle = b.c;
-    ctx.beginPath(); ctx.arc(0, 0, b.r, 0, 7); ctx.fill();
-    ctx.fillStyle = "rgba(255,255,255,.5)";
-    ctx.beginPath(); ctx.arc(-b.r * 0.3, -b.r * 0.3, b.r * 0.35, 0, 7); ctx.fill();
+    ctx.translate(b.x, b.y);
+    if (b.fish) {
+      const ang = Math.atan2(b.vy, b.vx);
+      ctx.rotate(ang);
+      ctx.fillStyle = b.c;
+      ctx.beginPath(); ctx.ellipse(0, 0, b.r, b.r * 0.6, 0, 0, 7); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(-b.r, 0); ctx.lineTo(-b.r - 5, -4); ctx.lineTo(-b.r - 5, 4); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = "#12303f"; ctx.beginPath(); ctx.arc(b.r * 0.4, -1, 1.3, 0, 7); ctx.fill();
+    } else {
+      ctx.rotate(b.spin);
+      ctx.fillStyle = b.c;
+      ctx.beginPath(); ctx.arc(0, 0, b.r, 0, 7); ctx.fill();
+      ctx.fillStyle = "rgba(255,255,255,.5)";
+      ctx.beginPath(); ctx.arc(-b.r * 0.3, -b.r * 0.3, b.r * 0.35, 0, 7); ctx.fill();
+    }
     ctx.restore();
   });
 
@@ -738,6 +878,86 @@ function drawMarmalade(p, t) {
   ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
 }
 
+function drawIrnBru(p, t) {
+  ctx.save();
+  ctx.translate(p.x, p.y + Math.sin(p.phase) * 2);
+  const w = 34, h = 50;
+  // HP pips (how much fizz is left)
+  const pipW = w / p.maxHp;
+  for (let i = 0; i < p.maxHp; i++) {
+    ctx.fillStyle = i < p.hp ? "#ff7a1a" : "rgba(0,0,0,.3)";
+    ctx.fillRect(-w / 2 + i * pipW, -h / 2 - 9, pipW - 1.5, 4);
+  }
+  // can body
+  ctx.fillStyle = "#eef3f7"; roundRect(ctx, -w / 2, -h / 2, w, h, 6); ctx.fill();
+  ctx.fillStyle = "#ff7a1a"; ctx.fillRect(-w / 2, -h / 2 + 13, w, h - 26);   // orange band
+  ctx.fillStyle = "#1f4aa0";                                                 // blue ends
+  ctx.fillRect(-w / 2, -h / 2, w, 11);
+  ctx.fillRect(-w / 2, h / 2 - 9, w, 9);
+  // sheen
+  ctx.fillStyle = "rgba(255,255,255,.25)"; ctx.fillRect(-w / 2 + 4, -h / 2 + 2, 5, h - 4);
+  // wordmark
+  ctx.fillStyle = "#1f4aa0"; ctx.font = "900 11px Trebuchet MS, sans-serif";
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillText("IRN", 0, -1); ctx.fillText("BRU", 0, 10);
+  ctx.restore();
+  ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
+  label("SHOOT ME!", p.x, p.y - h / 2 - 14, 0.6);
+}
+
+function drawTaymara(p, t) {
+  const bob = Math.sin(p.phase) * 2;
+  ctx.save();
+  ctx.translate(p.x, p.y + bob);
+  // friendly green halo — a hint NOT to shoot
+  ctx.fillStyle = "rgba(110,227,140,.18)";
+  ctx.beginPath(); ctx.arc(0, 0, p.r * 1.5, 0, 7); ctx.fill();
+  // hull
+  ctx.fillStyle = "#f2f6fa";
+  ctx.beginPath();
+  ctx.moveTo(-26, 2); ctx.quadraticCurveTo(0, 20, 26, 2);
+  ctx.lineTo(20, -6); ctx.lineTo(-20, -6); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = "#2a7fc0"; ctx.fillRect(-24, -3, 48, 3);   // waterline stripe
+  // wheelhouse
+  ctx.fillStyle = "#e94f4f"; roundRect(ctx, -9, -20, 18, 15, 3); ctx.fill();
+  ctx.fillStyle = "#bfe4ff"; ctx.fillRect(-5, -17, 10, 6);   // window
+  // mast + friendly heart flag
+  ctx.strokeStyle = "#3a2a17"; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(0, -20); ctx.lineTo(0, -34); ctx.stroke();
+  ctx.fillStyle = "#6fe3a0";
+  ctx.beginPath();
+  ctx.moveTo(2, -34); ctx.lineTo(14, -31); ctx.lineTo(2, -27); ctx.closePath(); ctx.fill();
+  ctx.restore();
+  label("TAYMARA — don't shoot!", p.x, p.y - p.r - 12, 0.6);
+}
+
+function drawDolphin(d, t) {
+  ctx.save();
+  ctx.translate(d.x, d.y);
+  const flip = d.life <= 0 ? d.dir : (Math.sin(d.phase) >= 0 ? 1 : -1);
+  ctx.scale(flip, 1);
+  ctx.rotate(-0.25);
+  // body
+  ctx.fillStyle = "#7fa8c8";
+  ctx.beginPath();
+  ctx.moveTo(-15, 5);
+  ctx.quadraticCurveTo(-6, -15, 16, -11);
+  ctx.quadraticCurveTo(7, -3, 11, 7);
+  ctx.quadraticCurveTo(-2, 1, -15, 5);
+  ctx.closePath(); ctx.fill();
+  // tail fluke
+  ctx.beginPath(); ctx.moveTo(-13, 4); ctx.lineTo(-22, -3); ctx.lineTo(-19, 9); ctx.closePath(); ctx.fill();
+  // dorsal fin
+  ctx.beginPath(); ctx.moveTo(0, -9); ctx.lineTo(6, -18); ctx.lineTo(8, -8); ctx.closePath(); ctx.fill();
+  // belly
+  ctx.fillStyle = "#e2eef7";
+  ctx.beginPath(); ctx.moveTo(-8, 4); ctx.quadraticCurveTo(2, 8, 10, 4); ctx.quadraticCurveTo(0, 2, -8, 4); ctx.closePath(); ctx.fill();
+  // eye + smile
+  ctx.fillStyle = "#12303f"; ctx.beginPath(); ctx.arc(9, -6, 1.6, 0, 7); ctx.fill();
+  ctx.strokeStyle = "#12303f"; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(11, -3, 3, 0, 1.4); ctx.stroke();
+  ctx.restore();
+}
+
 function drawBridge(t) {
   const by = riverY - 34;
   const curve = x => by - Math.sin((x / W) * Math.PI) * 8;   // gentle rise to mid-span
@@ -865,6 +1085,7 @@ function startGame() {
   if (!chosenChar) return;
   player = makePlayer(chosenChar);
   bullets = []; monsters = []; particles = []; floaters = []; ripples = []; powerups = [];
+  specials = []; dolphins = []; descendTimer = 9000;
   score = 0; cityHP = 100;
   el.hud.classList.remove("hidden");
   hideAll();
