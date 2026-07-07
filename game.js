@@ -1,0 +1,770 @@
+/* ============================================================
+   Jasper & Clementine Go Mental
+   A mobile-friendly defend-Dundee game.
+   ============================================================ */
+(function () {
+"use strict";
+
+// ---------- Canvas & scaling ----------
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+let W = 0, H = 0, DPR = 1;
+let riverY = 0;   // y where the Tay ends and the shore/city begins
+let shoreY = 0;   // y where the player stands
+
+function resize() {
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  W = window.innerWidth;
+  H = window.innerHeight;
+  canvas.width = Math.floor(W * DPR);
+  canvas.height = Math.floor(H * DPR);
+  canvas.style.width = W + "px";
+  canvas.style.height = H + "px";
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  riverY = H * 0.62;          // river occupies top ~62%
+  shoreY = H - Math.max(120, H * 0.14);
+  if (player) player.y = shoreY;
+  buildSkyline();
+}
+window.addEventListener("resize", resize);
+
+// ---------- Utility ----------
+const rand = (a, b) => a + Math.random() * (b - a);
+const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+const dist2 = (ax, ay, bx, by) => { const dx = ax - bx, dy = ay - by; return dx * dx + dy * dy; };
+
+// ---------- Audio (tiny WebAudio blips) ----------
+const Audio = (function () {
+  let ac = null, muted = false;
+  function ctxNow() { if (!ac) { try { ac = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { ac = null; } } return ac; }
+  function blip(freq, dur, type, vol) {
+    if (muted) return;
+    const a = ctxNow(); if (!a) return;
+    if (a.state === "suspended") a.resume();
+    const o = a.createOscillator(), g = a.createGain();
+    o.type = type || "square";
+    o.frequency.value = freq;
+    g.gain.value = (vol || 0.06);
+    o.connect(g); g.connect(a.destination);
+    const t = a.currentTime;
+    g.gain.setValueAtTime(g.gain.value, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.start(t); o.stop(t + dur);
+  }
+  return {
+    shoot: () => blip(620, 0.08, "square", 0.04),
+    hit:   () => blip(300, 0.09, "sawtooth", 0.05),
+    pop:   () => blip(180, 0.16, "triangle", 0.06),
+    hurt:  () => blip(120, 0.25, "sawtooth", 0.08),
+    special: () => { blip(200, 0.1, "square", 0.07); setTimeout(() => blip(400, 0.15, "square", 0.07), 90); setTimeout(() => blip(700, 0.2, "sawtooth", 0.07), 190); },
+    wave:  () => { blip(500, 0.1, "triangle", 0.06); setTimeout(() => blip(760, 0.16, "triangle", 0.06), 110); },
+    toggle: () => { muted = !muted; return muted; }
+  };
+})();
+
+// ---------- Character art ----------
+// Draw a character centered at (0,0). `r` ~ head radius scale.
+function drawHero(g, type, r, t) {
+  const bob = Math.sin(t * 0.008) * 2;
+  g.save();
+  g.translate(0, bob);
+  const isJ = type === "jasper";
+  const body = isJ ? "#3a7bd5" : "#ff8a3d";
+  const bodyDark = isJ ? "#285a9e" : "#e06a1f";
+  const fur = isJ ? "#dfeeff" : "#ffe4c4";
+
+  // shadow
+  g.fillStyle = "rgba(0,0,0,.25)";
+  g.beginPath(); g.ellipse(0, r * 1.9, r * 1.1, r * 0.35, 0, 0, 7); g.fill();
+
+  // body
+  g.fillStyle = body;
+  roundRect(g, -r * 0.85, r * 0.2, r * 1.7, r * 1.7, r * 0.7); g.fill();
+  g.fillStyle = bodyDark;
+  roundRect(g, -r * 0.85, r * 1.1, r * 1.7, r * 0.8, r * 0.5); g.fill();
+  // belly
+  g.fillStyle = fur;
+  g.beginPath(); g.ellipse(0, r * 1.0, r * 0.5, r * 0.6, 0, 0, 7); g.fill();
+
+  // head
+  g.fillStyle = body;
+  g.beginPath(); g.arc(0, -r * 0.5, r, 0, 7); g.fill();
+
+  // ears
+  g.fillStyle = body;
+  if (isJ) { // pointy cat-like ears
+    tri(g, -r * 0.75, -r * 1.15, -r * 0.35, -r * 1.85, -r * 0.05, -r * 1.15);
+    tri(g,  r * 0.75, -r * 1.15,  r * 0.35, -r * 1.85,  r * 0.05, -r * 1.15);
+    g.fillStyle = fur;
+    tri(g, -r * 0.55, -r * 1.2, -r * 0.35, -r * 1.6, -r * 0.18, -r * 1.2);
+    tri(g,  r * 0.55, -r * 1.2,  r * 0.35, -r * 1.6,  r * 0.18, -r * 1.2);
+  } else { // round floppy ears
+    g.beginPath(); g.arc(-r * 0.8, -r * 1.0, r * 0.42, 0, 7); g.fill();
+    g.beginPath(); g.arc( r * 0.8, -r * 1.0, r * 0.42, 0, 7); g.fill();
+  }
+
+  // face patch
+  g.fillStyle = fur;
+  g.beginPath(); g.ellipse(0, -r * 0.35, r * 0.62, r * 0.55, 0, 0, 7); g.fill();
+
+  // eyes
+  const blink = (Math.sin(t * 0.003) > 0.985) ? 0.15 : 1;
+  g.fillStyle = "#1a1a2a";
+  g.beginPath(); g.ellipse(-r * 0.3, -r * 0.6, r * 0.13, r * 0.16 * blink, 0, 0, 7); g.fill();
+  g.beginPath(); g.ellipse( r * 0.3, -r * 0.6, r * 0.13, r * 0.16 * blink, 0, 0, 7); g.fill();
+  g.fillStyle = "#fff";
+  g.beginPath(); g.arc(-r * 0.26, -r * 0.66, r * 0.05, 0, 7); g.fill();
+  g.beginPath(); g.arc( r * 0.34, -r * 0.66, r * 0.05, 0, 7); g.fill();
+
+  // nose
+  g.fillStyle = isJ ? "#ff6d9e" : "#7a3b12";
+  g.beginPath(); g.moveTo(-r * 0.12, -r * 0.34); g.lineTo(r * 0.12, -r * 0.34); g.lineTo(0, -r * 0.2); g.closePath(); g.fill();
+  // smile
+  g.strokeStyle = "#1a1a2a"; g.lineWidth = r * 0.06; g.lineCap = "round";
+  g.beginPath(); g.arc(-r * 0.14, -r * 0.22, r * 0.16, 0, Math.PI); g.stroke();
+  g.beginPath(); g.arc( r * 0.14, -r * 0.22, r * 0.16, 0, Math.PI); g.stroke();
+
+  // cheeks
+  g.fillStyle = isJ ? "rgba(255,120,160,.4)" : "rgba(255,90,90,.35)";
+  g.beginPath(); g.arc(-r * 0.5, -r * 0.35, r * 0.14, 0, 7); g.fill();
+  g.beginPath(); g.arc( r * 0.5, -r * 0.35, r * 0.14, 0, 7); g.fill();
+
+  g.restore();
+}
+
+function roundRect(g, x, y, w, h, r) {
+  r = Math.min(r, w / 2, h / 2);
+  g.beginPath();
+  g.moveTo(x + r, y);
+  g.arcTo(x + w, y, x + w, y + h, r);
+  g.arcTo(x + w, y + h, x, y + h, r);
+  g.arcTo(x, y + h, x, y, r);
+  g.arcTo(x, y, x + w, y, r);
+  g.closePath();
+}
+function tri(g, x1, y1, x2, y2, x3, y3) { g.beginPath(); g.moveTo(x1, y1); g.lineTo(x2, y2); g.lineTo(x3, y3); g.closePath(); g.fill(); }
+
+// character preview canvases on the title screen
+function renderPreviews() {
+  document.querySelectorAll("[data-preview]").forEach(cv => {
+    const g = cv.getContext("2d");
+    g.clearRect(0, 0, cv.width, cv.height);
+    g.save();
+    g.translate(cv.width / 2, cv.height / 2 + 14);
+    drawHero(g, cv.dataset.preview, 26, 0);
+    g.restore();
+  });
+}
+
+// ---------- Skyline (Dundee) ----------
+let skyline = [];
+function buildSkyline() {
+  skyline = [];
+  let x = 0;
+  while (x < W) {
+    const bw = rand(26, 56);
+    const bh = rand(24, 66);
+    skyline.push({ x, w: bw, h: bh, lit: Math.random() < 0.6 });
+    x += bw + rand(2, 10);
+  }
+}
+
+// ---------- Game entities ----------
+let player = null;
+let bullets = [];
+let monsters = [];
+let particles = [];
+let floaters = [];   // score text
+let ripples = [];
+
+const MonsterTypes = {
+  blob:   { r: 22, hp: 1, speed: 1.0, score: 10, color: "#5fe08a", eyes: 1 },
+  crab:   { r: 26, hp: 3, speed: 0.7, score: 25, color: "#ff6b6b", eyes: 2 },
+  eel:    { r: 18, hp: 2, speed: 1.7, score: 20, color: "#b78bff", eyes: 1, wiggle: true },
+  kraken: { r: 44, hp: 10, speed: 0.4, score: 120, color: "#3aa6a0", eyes: 3, big: true },
+};
+
+function makePlayer(type) {
+  return {
+    type,
+    x: W / 2,
+    y: shoreY,
+    r: 30,
+    targetX: W / 2,
+    cooldown: 0,
+    fireRate: type === "jasper" ? 240 : 340,   // ms
+    special: 0,                                 // 0..1
+    invuln: 0,
+    recoil: 0,
+  };
+}
+
+// ---------- State ----------
+const State = { TITLE: 0, PLAY: 1, PAUSE: 2, OVER: 3 };
+let state = State.TITLE;
+let score = 0, wave = 1, cityHP = 100, best = 0;
+let spawnTimer = 0, waveTimer = 0, monstersThisWave = 0, monstersSpawned = 0;
+let chosenChar = null;
+let lastT = 0;
+let shakeT = 0, shakeMag = 0;
+
+try { best = parseInt(localStorage.getItem("jc_best") || "0", 10) || 0; } catch (e) {}
+
+// ---------- Waves ----------
+function startWave(n) {
+  wave = n;
+  monstersThisWave = 4 + Math.floor(n * 2.5);
+  monstersSpawned = 0;
+  spawnTimer = 0;
+  waveTimer = 0;
+  el.wave.textContent = n;
+  if (n > 1) { Audio.wave(); floatText(W / 2, riverY - 30, "WAVE " + n, "#ffd24a", 34); }
+}
+
+function pickMonsterType() {
+  const r = Math.random();
+  const w = wave;
+  if (w >= 3 && monstersSpawned === monstersThisWave - 1 && w % 3 === 0) return "kraken";
+  if (w >= 4 && r < 0.15) return "kraken";
+  if (w >= 2 && r < 0.35) return "crab";
+  if (w >= 2 && r < 0.6) return "eel";
+  return "blob";
+}
+
+function spawnMonster() {
+  const key = pickMonsterType();
+  const base = MonsterTypes[key];
+  const hpBoost = 1 + Math.floor(wave / 4);
+  monsters.push({
+    key,
+    x: rand(base.r + 10, W - base.r - 10),
+    y: rand(-40, riverY - 60),
+    r: base.r,
+    hp: base.hp * hpBoost,
+    maxHp: base.hp * hpBoost,
+    speed: base.speed * (0.9 + wave * 0.05),
+    color: base.color,
+    score: base.score,
+    eyes: base.eyes,
+    wiggle: base.wiggle,
+    big: base.big,
+    phase: rand(0, 7),
+    hitFlash: 0,
+    emerged: false,
+    wob: rand(0, 7),
+  });
+  splash(monsters[monsters.length - 1].x, monsters[monsters.length - 1].y);
+}
+
+// ---------- Effects ----------
+function splash(x, y) {
+  ripples.push({ x, y, r: 4, max: rand(30, 50), a: 0.7 });
+  for (let i = 0; i < 8; i++) {
+    particles.push({ x, y, vx: rand(-2, 2), vy: rand(-3, -0.5), r: rand(2, 5), a: 1, c: "#8fd3ff", g: 0.12 });
+  }
+}
+function burst(x, y, color, n) {
+  for (let i = 0; i < n; i++) {
+    const ang = rand(0, 7), sp = rand(1, 5);
+    particles.push({ x, y, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp, r: rand(2, 6), a: 1, c: color, g: 0.06 });
+  }
+}
+function floatText(x, y, text, color, size) {
+  floaters.push({ x, y, text, color, size: size || 18, a: 1, vy: -0.6 });
+}
+function shake(mag) { shakeT = 1; shakeMag = mag; }
+
+// ---------- Firing ----------
+function fire() {
+  if (!player) return;
+  const isJ = player.type === "jasper";
+  player.recoil = 6;
+  if (isJ) {
+    bullets.push(mkBullet(player.x, player.y - player.r, 0, -9, 6, "#ffd24a", 1));
+  } else {
+    // Clementine: bigger, spread of 3, slower but heavier
+    bullets.push(mkBullet(player.x, player.y - player.r, 0, -7.5, 10, "#ff8a3d", 2));
+    bullets.push(mkBullet(player.x, player.y - player.r, -2.2, -7, 8, "#ffb36b", 1));
+    bullets.push(mkBullet(player.x, player.y - player.r, 2.2, -7, 8, "#ffb36b", 1));
+  }
+  Audio.shoot();
+}
+function mkBullet(x, y, vx, vy, r, c, dmg) { return { x, y, vx, vy, r, c, dmg, spin: 0 }; }
+
+function fireSpecial() {
+  if (!player || player.special < 1) return;
+  player.special = 0;
+  Audio.special();
+  shake(14);
+  floatText(W / 2, H / 2, "GONE MENTAL!", "#ff4d6d", 40);
+  // sweeping wave of projectiles
+  for (let a = -1; a <= 1; a += 0.08) {
+    bullets.push(mkBullet(player.x, player.y - player.r, a * 6, -9, 9, "#b78bff", 3));
+  }
+  // damage everything on screen a bit
+  monsters.forEach(m => { m.hp -= 4; m.hitFlash = 1; });
+  burst(player.x, player.y - player.r, "#b78bff", 40);
+}
+
+// ---------- Update ----------
+function update(dt) {
+  if (state !== State.PLAY) return;
+  const t = performance.now();
+
+  // player
+  player.x += (player.targetX - player.x) * 0.25;
+  player.x = clamp(player.x, player.r, W - player.r);
+  if (player.recoil > 0) player.recoil *= 0.8;
+  if (player.invuln > 0) player.invuln -= dt;
+  // auto fire
+  player.cooldown -= dt;
+  if (player.cooldown <= 0) { fire(); player.cooldown = player.fireRate; }
+
+  // spawning
+  if (monstersSpawned < monstersThisWave) {
+    spawnTimer -= dt;
+    if (spawnTimer <= 0) {
+      spawnMonster();
+      monstersSpawned++;
+      spawnTimer = clamp(1100 - wave * 60, 350, 1100);
+    }
+  } else if (monsters.length === 0) {
+    waveTimer += dt;
+    if (waveTimer > 900) startWave(wave + 1);
+  }
+
+  // bullets
+  for (let i = bullets.length - 1; i >= 0; i--) {
+    const b = bullets[i];
+    b.x += b.vx; b.y += b.vy; b.spin += 0.3;
+    if (b.y < -20 || b.x < -20 || b.x > W + 20) { bullets.splice(i, 1); continue; }
+  }
+
+  // monsters
+  for (let i = monsters.length - 1; i >= 0; i--) {
+    const m = monsters[i];
+    m.phase += 0.05; m.wob += 0.04;
+    if (m.hitFlash > 0) m.hitFlash -= dt / 120;
+    // drift toward city
+    m.y += m.speed * (dt / 16.7);
+    if (m.wiggle) m.x += Math.sin(m.phase * 2) * 1.6;
+    else m.x += Math.sin(m.wob) * 0.4;
+    m.x = clamp(m.x, m.r, W - m.r);
+    if (!m.emerged && m.y > 0) { m.emerged = true; }
+
+    // reached the city?
+    if (m.y + m.r >= shoreY - 10) {
+      cityHP -= m.big ? 25 : (m.maxHp > 2 ? 12 : 7);
+      cityHP = Math.max(0, cityHP);
+      Audio.hurt();
+      shake(m.big ? 16 : 8);
+      burst(m.x, shoreY - 10, "#ff5a5a", 18);
+      floatText(m.x, shoreY - 30, "-DUNDEE", "#ff5a5a", 18);
+      monsters.splice(i, 1);
+      updateHUD();
+      if (cityHP <= 0) { gameOver(false); return; }
+      continue;
+    }
+
+    // bullet collisions
+    for (let j = bullets.length - 1; j >= 0; j--) {
+      const b = bullets[j];
+      const rr = (m.r + b.r);
+      if (dist2(m.x, m.y, b.x, b.y) <= rr * rr) {
+        m.hp -= b.dmg;
+        m.hitFlash = 1;
+        burst(b.x, b.y, m.color, 5);
+        Audio.hit();
+        bullets.splice(j, 1);
+        if (m.hp <= 0) {
+          killMonster(m, i);
+          break;
+        }
+      }
+    }
+  }
+
+  // effects
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx; p.y += p.vy; p.vy += p.g; p.a -= 0.02;
+    if (p.a <= 0) particles.splice(i, 1);
+  }
+  for (let i = ripples.length - 1; i >= 0; i--) {
+    const r = ripples[i]; r.r += 1.2; r.a -= 0.02;
+    if (r.a <= 0) ripples.splice(i, 1);
+  }
+  for (let i = floaters.length - 1; i >= 0; i--) {
+    const f = floaters[i]; f.y += f.vy; f.a -= 0.014;
+    if (f.a <= 0) floaters.splice(i, 1);
+  }
+  if (shakeT > 0) shakeT -= dt / 300;
+}
+
+function killMonster(m, i) {
+  score += m.score;
+  player.special = clamp(player.special + (m.big ? 0.35 : 0.06), 0, 1);
+  burst(m.x, m.y, m.color, m.big ? 30 : 14);
+  ripples.push({ x: m.x, y: m.y, r: m.r, max: m.r * 2, a: 0.6 });
+  floatText(m.x, m.y - m.r, "+" + m.score, "#ffd24a", m.big ? 30 : 18);
+  Audio.pop();
+  if (m.big) shake(10);
+  monsters.splice(i, 1);
+  updateHUD();
+}
+
+// ---------- Render ----------
+function render() {
+  const t = performance.now();
+  ctx.save();
+  if (shakeT > 0) {
+    const s = shakeMag * shakeT;
+    ctx.translate(rand(-s, s), rand(-s, s));
+  }
+
+  drawScene(t);
+
+  // ripples (on water)
+  ripples.forEach(r => {
+    ctx.strokeStyle = `rgba(200,235,255,${r.a})`;
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.ellipse(r.x, r.y, r.r, r.r * 0.45, 0, 0, 7); ctx.stroke();
+  });
+
+  // monsters
+  monsters.forEach(m => drawMonster(m, t));
+
+  // bullets
+  bullets.forEach(b => {
+    ctx.save();
+    ctx.translate(b.x, b.y); ctx.rotate(b.spin);
+    ctx.fillStyle = b.c;
+    ctx.beginPath(); ctx.arc(0, 0, b.r, 0, 7); ctx.fill();
+    ctx.fillStyle = "rgba(255,255,255,.5)";
+    ctx.beginPath(); ctx.arc(-b.r * 0.3, -b.r * 0.3, b.r * 0.35, 0, 7); ctx.fill();
+    ctx.restore();
+  });
+
+  // player
+  if (player && state !== State.TITLE) {
+    ctx.save();
+    ctx.translate(player.x, player.y - player.recoil);
+    if (player.invuln > 0 && Math.floor(t / 100) % 2 === 0) ctx.globalAlpha = 0.4;
+    drawHero(ctx, player.type, player.r, t);
+    ctx.restore();
+  }
+
+  // particles
+  particles.forEach(p => {
+    ctx.globalAlpha = clamp(p.a, 0, 1);
+    ctx.fillStyle = p.c;
+    ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, 7); ctx.fill();
+  });
+  ctx.globalAlpha = 1;
+
+  // floaters
+  floaters.forEach(f => {
+    ctx.globalAlpha = clamp(f.a, 0, 1);
+    ctx.fillStyle = f.color;
+    ctx.font = "900 " + f.size + "px Trebuchet MS, sans-serif";
+    ctx.textAlign = "center";
+    ctx.lineWidth = 4; ctx.strokeStyle = "rgba(0,0,0,.4)";
+    ctx.strokeText(f.text, f.x, f.y);
+    ctx.fillText(f.text, f.x, f.y);
+  });
+  ctx.globalAlpha = 1;
+  ctx.textAlign = "left";
+
+  ctx.restore();
+}
+
+function drawScene(t) {
+  // sky
+  let sky = ctx.createLinearGradient(0, 0, 0, riverY);
+  sky.addColorStop(0, "#12385f");
+  sky.addColorStop(1, "#2d6ea0");
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, W, riverY);
+
+  // distant Tay Rail Bridge silhouette
+  drawBridge(t);
+
+  // water (the Tay)
+  let water = ctx.createLinearGradient(0, riverY - 60, 0, shoreY);
+  water.addColorStop(0, "#1c4a7a");
+  water.addColorStop(1, "#0f2f52");
+  ctx.fillStyle = water;
+  ctx.fillRect(0, riverY - 60, W, shoreY - (riverY - 60) + 4);
+
+  // wavy water surface
+  ctx.strokeStyle = "rgba(140,200,255,.25)";
+  ctx.lineWidth = 2;
+  for (let k = 0; k < 4; k++) {
+    const yy = riverY - 50 + k * ((shoreY - riverY + 50) / 4);
+    ctx.beginPath();
+    for (let x = 0; x <= W; x += 16) {
+      const y = yy + Math.sin((x * 0.03) + t * 0.002 + k) * 4;
+      x === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+
+  // Dundee skyline sitting on the near shore (drawn over the water)
+  const cityTop = shoreY;
+  skyline.forEach(b => {
+    ctx.fillStyle = "#0a1a2e";
+    ctx.fillRect(b.x, cityTop - b.h, b.w, b.h);
+    if (b.lit) {
+      ctx.fillStyle = "rgba(255,210,74,.65)";
+      for (let wy = cityTop - b.h + 6; wy < cityTop - 6; wy += 12) {
+        for (let wx = b.x + 5; wx < b.x + b.w - 6; wx += 12) {
+          if ((wx + wy) % 3 === 0) ctx.fillRect(wx, wy, 4, 5);
+        }
+      }
+    }
+  });
+
+  // shore / promenade
+  ctx.fillStyle = "#1a2a1f";
+  ctx.fillRect(0, shoreY - 6, W, H - shoreY + 6);
+  ctx.fillStyle = "#243a2a";
+  ctx.fillRect(0, shoreY - 6, W, 6);
+}
+
+function drawBridge(t) {
+  const by = riverY - 40;
+  ctx.strokeStyle = "rgba(8,20,34,.7)";
+  ctx.fillStyle = "rgba(8,20,34,.7)";
+  ctx.lineWidth = 3;
+  // deck
+  ctx.beginPath(); ctx.moveTo(0, by); ctx.lineTo(W, by); ctx.stroke();
+  // piers
+  for (let x = 20; x < W; x += 46) {
+    ctx.fillRect(x, by, 5, 40);
+    // little truss
+    ctx.beginPath();
+    ctx.moveTo(x + 2.5, by);
+    ctx.lineTo(x + 2.5, by - 10);
+    ctx.stroke();
+  }
+}
+
+function drawMonster(m, t) {
+  const wobY = Math.sin(m.wob) * 3;
+  ctx.save();
+  ctx.translate(m.x, m.y + wobY);
+
+  // wet shine under water not yet emerged
+  const flash = m.hitFlash > 0;
+  const col = flash ? "#ffffff" : m.color;
+
+  // tentacles for kraken
+  if (m.big) {
+    ctx.strokeStyle = col; ctx.lineWidth = 8; ctx.lineCap = "round";
+    for (let a = 0; a < 6; a++) {
+      const ang = (a / 6) * Math.PI * 2 + m.phase * 0.3;
+      const len = m.r * 1.4 + Math.sin(m.phase + a) * 8;
+      ctx.beginPath();
+      ctx.moveTo(0, m.r * 0.3);
+      ctx.quadraticCurveTo(Math.cos(ang) * len * 0.6, m.r + Math.sin(m.phase + a) * 8,
+                           Math.cos(ang) * len, m.r * 0.8 + len * 0.5);
+      ctx.stroke();
+    }
+  }
+
+  // body blob
+  ctx.fillStyle = col;
+  ctx.beginPath();
+  const lobes = m.big ? 10 : 8;
+  for (let i = 0; i <= lobes; i++) {
+    const a = (i / lobes) * Math.PI * 2;
+    const rr = m.r * (1 + Math.sin(a * 3 + m.phase) * 0.08);
+    const x = Math.cos(a) * rr, y = Math.sin(a) * rr;
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  }
+  ctx.closePath(); ctx.fill();
+
+  // darker underside
+  ctx.fillStyle = "rgba(0,0,0,.15)";
+  ctx.beginPath(); ctx.ellipse(0, m.r * 0.4, m.r * 0.8, m.r * 0.4, 0, 0, 7); ctx.fill();
+
+  // eyes
+  ctx.fillStyle = "#fff";
+  const eyeCount = m.eyes;
+  for (let e = 0; e < eyeCount; e++) {
+    const ox = eyeCount === 1 ? 0 : (e - (eyeCount - 1) / 2) * m.r * 0.5;
+    const oy = -m.r * 0.15;
+    const es = m.r * (eyeCount > 2 ? 0.18 : 0.24);
+    ctx.beginPath(); ctx.arc(ox, oy, es, 0, 7); ctx.fill();
+    ctx.fillStyle = "#1a1a2a";
+    ctx.beginPath(); ctx.arc(ox, oy + es * 0.2, es * 0.5, 0, 7); ctx.fill();
+    ctx.fillStyle = "#fff";
+  }
+
+  // angry brow
+  ctx.strokeStyle = "#1a1a2a"; ctx.lineWidth = m.r * 0.1;
+  ctx.beginPath(); ctx.moveTo(-m.r * 0.5, -m.r * 0.5); ctx.lineTo(-m.r * 0.1, -m.r * 0.3); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(m.r * 0.5, -m.r * 0.5); ctx.lineTo(m.r * 0.1, -m.r * 0.3); ctx.stroke();
+
+  // hp pips for tougher monsters
+  if (m.maxHp > 1) {
+    const pipW = (m.r * 1.6) / m.maxHp;
+    for (let p = 0; p < m.maxHp; p++) {
+      ctx.fillStyle = p < m.hp ? "#7fffa0" : "rgba(0,0,0,.3)";
+      ctx.fillRect(-m.r * 0.8 + p * pipW, -m.r - 10, pipW - 2, 4);
+    }
+  }
+
+  ctx.restore();
+}
+
+// ---------- Loop ----------
+function loop(t) {
+  const dt = Math.min(50, t - lastT || 16);
+  lastT = t;
+  update(dt);
+  render();
+  requestAnimationFrame(loop);
+}
+
+// ---------- HUD ----------
+const el = {
+  hud: document.getElementById("hud"),
+  score: document.getElementById("score"),
+  wave: document.getElementById("wave"),
+  cityFill: document.getElementById("cityFill"),
+  specialFill: document.getElementById("specialFill"),
+  title: document.getElementById("titleScreen"),
+  pause: document.getElementById("pauseScreen"),
+  over: document.getElementById("overScreen"),
+  overTitle: document.getElementById("overTitle"),
+  overMsg: document.getElementById("overMsg"),
+  finalScore: document.getElementById("finalScore"),
+  finalWave: document.getElementById("finalWave"),
+  bestScore: document.getElementById("bestScore"),
+};
+function updateHUD() {
+  el.score.textContent = score;
+  el.cityFill.style.width = clamp(cityHP, 0, 100) + "%";
+  el.specialFill.style.width = clamp(player ? player.special * 100 : 0, 0, 100) + "%";
+}
+
+// ---------- Flow ----------
+function startGame() {
+  if (!chosenChar) return;
+  player = makePlayer(chosenChar);
+  bullets = []; monsters = []; particles = []; floaters = []; ripples = [];
+  score = 0; cityHP = 100;
+  el.hud.classList.remove("hidden");
+  hideAll();
+  state = State.PLAY;
+  startWave(1);
+  updateHUD();
+  // keep special bar refreshed
+  clearInterval(startGame._hi);
+  startGame._hi = setInterval(() => { if (state === State.PLAY) updateHUD(); }, 120);
+}
+function gameOver(won) {
+  state = State.OVER;
+  if (score > best) { best = score; try { localStorage.setItem("jc_best", best); } catch (e) {} }
+  el.overTitle.textContent = won ? "Dundee is saved!" : "Dundee has fallen!";
+  el.overMsg.textContent = won
+    ? "The Tay is calm again. For now…"
+    : (player.type === "jasper" ? "Jasper gave it laldy, but the monsters won." : "Clementine splashed hard, but Dundee is overrun.");
+  el.finalScore.textContent = score;
+  el.finalWave.textContent = wave;
+  el.bestScore.textContent = best;
+  el.hud.classList.add("hidden");
+  el.over.classList.remove("hidden");
+}
+function pauseGame() { if (state === State.PLAY) { state = State.PAUSE; el.pause.classList.remove("hidden"); } }
+function resumeGame() { if (state === State.PAUSE) { state = State.PLAY; el.pause.classList.add("hidden"); lastT = performance.now(); } }
+function toMenu() {
+  state = State.TITLE;
+  hideAll();
+  el.hud.classList.add("hidden");
+  el.title.classList.remove("hidden");
+}
+function hideAll() {
+  el.title.classList.add("hidden");
+  el.pause.classList.add("hidden");
+  el.over.classList.add("hidden");
+}
+
+// ---------- Input ----------
+let dragging = false;
+function pointerPos(e) {
+  const p = e.touches ? e.touches[0] : e;
+  return { x: p.clientX, y: p.clientY };
+}
+function onDown(e) {
+  if (state !== State.PLAY) return;
+  e.preventDefault();
+  const p = pointerPos(e);
+  dragging = true;
+  player.targetX = p.x;
+  // tap in lower-right corner-ish always allowed; tap fires special if ready, else a quick shot
+  fireSpecial();
+}
+function onMove(e) {
+  if (state !== State.PLAY || !dragging) return;
+  e.preventDefault();
+  const p = pointerPos(e);
+  player.targetX = p.x;
+}
+function onUp() { dragging = false; }
+
+canvas.addEventListener("touchstart", onDown, { passive: false });
+canvas.addEventListener("touchmove", onMove, { passive: false });
+canvas.addEventListener("touchend", onUp);
+canvas.addEventListener("mousedown", onDown);
+canvas.addEventListener("mousemove", onMove);
+window.addEventListener("mouseup", onUp);
+
+// keyboard for desktop play
+const keys = {};
+window.addEventListener("keydown", e => {
+  keys[e.key] = true;
+  if (state === State.PLAY) {
+    if (e.key === " ") { e.preventDefault(); fireSpecial(); }
+    if (e.key === "p" || e.key === "P") pauseGame();
+    if (e.key === "ArrowLeft" || e.key === "a") player.targetX = clamp(player.x - 60, player.r, W - player.r);
+    if (e.key === "ArrowRight" || e.key === "d") player.targetX = clamp(player.x + 60, player.r, W - player.r);
+  }
+});
+window.addEventListener("keyup", e => { keys[e.key] = false; });
+// smooth keyboard hold
+setInterval(() => {
+  if (state !== State.PLAY) return;
+  if (keys["ArrowLeft"] || keys["a"]) player.targetX = clamp(player.targetX - 12, player.r, W - player.r);
+  if (keys["ArrowRight"] || keys["d"]) player.targetX = clamp(player.targetX + 12, player.r, W - player.r);
+}, 30);
+
+// ---------- UI buttons ----------
+document.querySelectorAll(".charBtn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".charBtn").forEach(b => b.classList.remove("selected"));
+    btn.classList.add("selected");
+    chosenChar = btn.dataset.char;
+    const sb = document.getElementById("startBtn");
+    sb.disabled = false;
+    sb.textContent = "Save Dundee as " + (chosenChar === "jasper" ? "Jasper" : "Clementine") + "!";
+  });
+});
+document.getElementById("startBtn").addEventListener("click", startGame);
+document.getElementById("pauseBtn").addEventListener("click", pauseGame);
+document.getElementById("resumeBtn").addEventListener("click", resumeGame);
+document.getElementById("quitBtn").addEventListener("click", toMenu);
+document.getElementById("againBtn").addEventListener("click", startGame);
+document.getElementById("menuBtn").addEventListener("click", toMenu);
+
+// prevent iOS double-tap zoom / scroll bounce
+document.addEventListener("gesturestart", e => e.preventDefault());
+document.addEventListener("touchmove", e => { if (e.target === canvas) e.preventDefault(); }, { passive: false });
+
+// ---------- Boot ----------
+resize();
+renderPreviews();
+requestAnimationFrame(loop);
+
+})();

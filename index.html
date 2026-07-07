@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#0b2545">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<title>Jasper &amp; Clementine Go Mental</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="game">
+  <canvas id="canvas"></canvas>
+
+  <!-- HUD -->
+  <div id="hud" class="hidden">
+    <div class="hud-row">
+      <div class="hud-item">
+        <span class="hud-label">SCORE</span>
+        <span id="score">0</span>
+      </div>
+      <div class="hud-item">
+        <span class="hud-label">WAVE</span>
+        <span id="wave">1</span>
+      </div>
+      <button id="pauseBtn" aria-label="Pause">II</button>
+    </div>
+    <div id="cityBar" class="bar">
+      <span class="bar-label">DUNDEE</span>
+      <div class="bar-track"><div id="cityFill" class="bar-fill city"></div></div>
+    </div>
+    <div id="specialBar" class="bar">
+      <span class="bar-label">SPECIAL</span>
+      <div class="bar-track"><div id="specialFill" class="bar-fill special"></div></div>
+    </div>
+  </div>
+
+  <!-- Title / character select -->
+  <div id="titleScreen" class="overlay">
+    <div class="panel">
+      <h1>Jasper &amp; Clementine<br><span class="mental">GO MENTAL</span></h1>
+      <p class="tag">Monsters are boiling up out of the River Tay.<br>Only you can save Dundee!</p>
+      <p class="choose">Choose your hero</p>
+      <div class="charSelect">
+        <button class="charBtn" data-char="jasper">
+          <canvas class="charPreview" width="120" height="120" data-preview="jasper"></canvas>
+          <span class="charName">JASPER</span>
+          <span class="charDesc">Fast &amp; fierce</span>
+        </button>
+        <button class="charBtn" data-char="clementine">
+          <canvas class="charPreview" width="120" height="120" data-preview="clementine"></canvas>
+          <span class="charName">CLEMENTINE</span>
+          <span class="charDesc">Big splash shots</span>
+        </button>
+      </div>
+      <button id="startBtn" class="bigBtn" disabled>Pick a hero first</button>
+      <p class="hint">Drag to move &bull; tap to hurl treats &bull; fill SPECIAL for a mega-blast</p>
+    </div>
+  </div>
+
+  <!-- Pause -->
+  <div id="pauseScreen" class="overlay hidden">
+    <div class="panel">
+      <h2>Paused</h2>
+      <button id="resumeBtn" class="bigBtn">Resume</button>
+      <button id="quitBtn" class="smallBtn">Quit to menu</button>
+    </div>
+  </div>
+
+  <!-- Game over -->
+  <div id="overScreen" class="overlay hidden">
+    <div class="panel">
+      <h2 id="overTitle">Dundee has fallen!</h2>
+      <p class="tag" id="overMsg"></p>
+      <div class="finalStats">
+        <div><span class="hud-label">SCORE</span><br><span id="finalScore">0</span></div>
+        <div><span class="hud-label">BEST</span><br><span id="bestScore">0</span></div>
+        <div><span class="hud-label">WAVE</span><br><span id="finalWave">1</span></div>
+      </div>
+      <button id="againBtn" class="bigBtn">Play again</button>
+      <button id="menuBtn" class="smallBtn">Change hero</button>
+    </div>
+  </div>
+</div>
+<script src="game.js"></script>
+</body>
+</html>
